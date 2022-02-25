@@ -1,13 +1,22 @@
-cmake_minimum_required(VERSION 3.17)
+################################################################################
+# CHIP-8 Emulator
+# Copyright (C) 2020 Ryan Clarke <kj6msg@icloud.com>
+################################################################################
 
-project(CHIP8 VERSION 1.0.0 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.22)
+project(chip8 VERSION 2.0.0 DESCRIPTION "CHIP-8 Emulator" LANGUAGES CXX)
 
-set(SOURCE_FILES src/main.cpp src/chip8.cpp)
+find_package(fmt REQUIRED)
+find_package(Microsoft.GSL CONFIG REQUIRED)
+find_package(SFML 2.5 COMPONENTS system window graphics audio REQUIRED)
 
-find_package(SFML 2.5 COMPONENTS graphics audio REQUIRED)
+add_executable(chip8 src/main.cpp src/chip8.cpp src/chip8.hpp)
 
-add_executable(chip8 ${SOURCE_FILES})
-target_include_directories(chip8 PRIVATE /usr/local/include)
-target_compile_options(chip8 PRIVATE -O2 -Wall -Wextra)
-target_compile_features(chip8 PRIVATE cxx_std_17)
-target_link_libraries(chip8 PRIVATE sfml-system sfml-window sfml-graphics sfml-audio)
+target_compile_features(chip8 PRIVATE cxx_std_20)
+target_compile_options(chip8 PRIVATE -Wall -Wextra)
+target_link_libraries(chip8 PRIVATE fmt::fmt
+                                    Microsoft.GSL::GSL
+                                    sfml-system
+                                    sfml-window
+                                    sfml-graphics
+                                    sfml-audio)

@@ -1,20 +1,40 @@
 # CHIP-8 Emulator
 
-A simple CHIP-8 emulator written in C++ using the SFML library. The emulator is
-fully functional with keyboard, sound, 60 Hz timers, and runs at 500 Hz. Several
-demo programs are included for use.
+CHIP-8 emulator written in C++20 using SFML. Fully functional at 500Hz. Several
+public domain ROMs are included for use.
 
-## Build
+## Dependencies
+* {fmt}
+* Microsoft Guidelines Support Library
+* SFML 2.5
 
-This project uses CMake. To build, execute the following terminal commands from
-the project root directory:
-
+## Compile and Run
+Compile:
 ```
-cmake -S . -B build
-cmake --build build
+% mkdir build
+% cd build
+% cmake ..
+% cmake --build .
+```
+Run:
+```
+% ./chip8 filename
+```
+
+## Keymap
+```
+ 1 | 2 | 3 | C
+(1)|(2)|(3)|(4)
+---------------
+ 4 | 5 | 6 | D
+(q)|(w)|(e)|(r)
+---------------
+ 7 | 8 | 9 | E
+(a)|(s)|(d)|(f)
+---------------
+ A | 0 | B | F
+(z)|(x)|(c)|(v)
 ```
 
 ## License
-
-This project is copyright (c) 2020 Ryan Clarke and is licensed under the MIT
-License.
+Copyright (c) 2020 Ryan Clarke, licensed under the MIT License.

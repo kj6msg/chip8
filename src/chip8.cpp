@@ -1,4 +1,9 @@
 ////////////////////////////////////////////////////////////////////////////////
+// CHIP-8 Emulator
+// Copyright (C) 2022 Ryan Clarke <kj6msg@icloud.com>
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
 // MIT License
 //
 // Copyright (c) 2020 Ryan Clarke
@@ -22,116 +27,20 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
-////////////////////////////////////////////////////////////////////////////////
-// Program   : chip8
-// File Name : chip8.cpp
-// Project   : CHIP-8
-// Author    : Ryan Clarke
-// E-mail    : kj6msg@icloud.com
-// -----------------------------------------------------------------------------
-// Purpose   : Class definition and helper functions for the CHIP-8 emulator.
-////////////////////////////////////////////////////////////////////////////////
-
 #include <algorithm>
 #include <array>
-#include "chip8.h"
-#include <cmath>
 #include <cstdint>
-#include <cstdlib>
-#include <iostream>
-#include <iterator>
-#include <SFML/Graphics.hpp>
-#include <SFML/Window.hpp>
+#include <cstdio>
+#include <exception>
+#include <random>
 #include <utility>
 #include <vector>
-
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Generate tone
-///
-/// This function generates a square wave to be used when the sound timer is
-/// active in the CHIP8.
-//
-/// \param frequency Frequency of square wave
-/// \param sample_rate Sample rate of sound buffer
-///
-/// \return Vector holding one period of samples
-///
-////////////////////////////////////////////////////////////////////////////////
-static std::vector<sf::Int16> square_wave(unsigned int frequency,
-                                          unsigned int sample_rate);
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Extract type from opcode
-///
-/// This function extracts the type of operation from an \a opcode.
-///
-/// \param opcode Opcode
-///
-/// \return Opcode type
-///
-////////////////////////////////////////////////////////////////////////////////
-static uint8_t type(uint16_t opcode);
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Extract NNN from opcode
-///
-/// This function extracts the 12-bit NNN value from an \a opcode.
-///
-/// \param opcode Opcode
-///
-/// \return NNN
-///
-////////////////////////////////////////////////////////////////////////////////
-static uint16_t NNN(uint16_t opcode);
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Extract NN from opcode
-///
-/// This function extracts the 8-bit NN value from an \a opcode.
-///
-/// \param opcode Opcode
-///
-/// \return NN
-///
-////////////////////////////////////////////////////////////////////////////////
-static uint8_t NN(uint16_t opcode);
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Extract N from opcode
-///
-/// This function extracts the 4-bit N value from an \a opcode.
-///
-/// \param opcode Opcode
-///
-/// \return N
-///
-////////////////////////////////////////////////////////////////////////////////
-static uint8_t N(uint16_t opcode);
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Extract Vx from opcode
-///
-/// This function extracts 4-bit register index from an \a opcode.
-///
-/// \param opcode Opcode
-///
-/// \return Register index
-///
-////////////////////////////////////////////////////////////////////////////////
-static uint8_t VX(uint16_t opcode);
-
-////////////////////////////////////////////////////////////////////////////////
-/// \brief Extract Vy from opcode
-///
-/// This function extracts 4-bit register index from an \a opcode.
-///
-/// \param opcode Opcode
-///
-/// \return Register index
-///
-////////////////////////////////////////////////////////////////////////////////
-static uint8_t VY(uint16_t opcode);
+#include <gsl/util>
+#include <fmt/core.h>
+#include <SFML/Audio.hpp>
+#include <SFML/Graphics.hpp>
+#include <SFML/Window.hpp>
+#include "chip8.hpp"
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -139,29 +48,29 @@ static uint8_t VY(uint16_t opcode);
 ////////////////////////////////////////////////////////////////////////////////
 
 // default keyboard map for CHIP8 hexademical keypad
-static const std::array<sf::Keyboard::Key, 16> default_keymap
+static const std::array<sf::Keyboard::Key, 16> default_keys
 {
-    sf::Keyboard::X,
-    sf::Keyboard::Num1,
-    sf::Keyboard::Num2,
-    sf::Keyboard::Num3,
-    sf::Keyboard::Q,
-    sf::Keyboard::W,
-    sf::Keyboard::E,
-    sf::Keyboard::A,
-    sf::Keyboard::S,
-    sf::Keyboard::D,
-    sf::Keyboard::Z,
-    sf::Keyboard::C,
-    sf::Keyboard::Num4,
-    sf::Keyboard::R,
-    sf::Keyboard::F,
-    sf::Keyboard::V
+    sf::Keyboard::X,        // 0
+    sf::Keyboard::Num1,     // 1
+    sf::Keyboard::Num2,     // 2
+    sf::Keyboard::Num3,     // 3
+    sf::Keyboard::Q,        // 4
+    sf::Keyboard::W,        // 5
+    sf::Keyboard::E,        // 6
+    sf::Keyboard::A,        // 7
+    sf::Keyboard::S,        // 8
+    sf::Keyboard::D,        // 9
+    sf::Keyboard::Z,        // A
+    sf::Keyboard::C,        // B
+    sf::Keyboard::Num4,     // C
+    sf::Keyboard::R,        // D
+    sf::Keyboard::F,        // E
+    sf::Keyboard::V         // F
 };
 
 
 // 8x5 font for each hexadecimal digit
-static const std::array<uint8_t, 80> font
+static const std::array<std::uint8_t, 80> font
 {
     0b1111'0000,         // 0
     0b1001'0000,
@@ -262,504 +171,569 @@ static const std::array<uint8_t, 80> font
 
 
 ////////////////////////////////////////////////////////////////////////////////
-CHIP8::CHIP8(const std::vector<uint8_t>& program)
-{
-    // copy font and program to CHIP8 memory
-    memory.resize(mem_size);
-    std::copy(font.begin(), font.end(), memory.begin());
-    std::copy(program.begin(), program.end(), memory.begin() + org);
+// Public Member Functions
+////////////////////////////////////////////////////////////////////////////////
 
-    // set default key mapping
-    m_keymap.resize(16);
-    for(std::size_t i = 0; i != m_keymap.size(); ++i)
-        m_keymap[i] = std::make_pair(default_keymap[i], KeyState::Released);
-    
-    // create the CHIP8 display and clear it
+////////////////////////////////////////////////////////////////////////////////
+CHIP8::CHIP8(const std::vector<std::uint8_t>& program)
+    : m_memory(mem_size), m_engine(std::random_device{}()), m_dist(0U, 255U),
+      m_window(sf::VideoMode::getFullscreenModes().front(), "CHIP-8",
+            sf::Style::Fullscreen)
+{
+    std::copy(font.begin(), font.end(), m_memory.begin());
+    std::copy(program.begin(), program.end(), m_memory.begin() + org);
+
+    // Set default key states
+    for(const auto key : default_keys)
+        m_keymap.emplace_back(key, KeyState::Released);
+
+    m_pixels.create(width, height);
     m_texture.create(width, height);
-    m_pixels.assign(width * height, 0);
-    m_texture.update(reinterpret_cast<const sf::Uint8*>(m_pixels.data()));
+    m_texture.update(m_pixels);
     m_sprite.setTexture(m_texture);
 
+    m_window.setView(sf::View(sf::FloatRect(0.0f, 0.0f,
+        static_cast<float>(CHIP8::width), static_cast<float>(CHIP8::height))));
+    m_window.setKeyRepeatEnabled(false);
+    m_window.setMouseCursorVisible(false);
+
     // generate the sound data for the sound timer
-    auto samples = square_wave(1050, 44100);
+    constexpr auto num_samples = Fs / tone;
+    std::vector<sf::Int16> samples(num_samples);
+    auto halfway = std::fill_n(samples.begin(), num_samples / 2, 0);
+    std::fill(halfway, samples.end(), 24500);
+
     m_soundbuffer.loadFromSamples(samples.data(), samples.size(), 1, 44100);
     m_sound.setBuffer(m_soundbuffer);
     m_sound.setLoop(true);
 
     // reset the DT and ST clock
-    timer_clock.restart();
+    m_timer_clock.restart();
+
+    // instruction decoding maps
+    m_opcodes[0x0000U] = [this](std::uint16_t opcode)
+    {
+        if(m_opcodes_0.contains(opcode))
+            m_opcodes_0[opcode]();
+    };
+    m_opcodes[0x1000U] = [this](std::uint16_t opcode){ JUMP(opcode); };
+    m_opcodes[0x2000U] = [this](std::uint16_t opcode){ CALL(opcode); };
+    m_opcodes[0x3000U] = [this](std::uint16_t opcode){ SKE(opcode); };
+    m_opcodes[0x4000U] = [this](std::uint16_t opcode){ SKNE(opcode); };
+    m_opcodes[0x5000U] = [this](std::uint16_t opcode){ SKRE(opcode); };
+    m_opcodes[0x6000U] = [this](std::uint16_t opcode){ LOAD(opcode); };
+    m_opcodes[0x7000U] = [this](std::uint16_t opcode){ ADD(opcode); };
+    m_opcodes[0x8000U] = [this](std::uint16_t opcode)
+    {
+        m_opcodes_8.at(opcode & 0xF00FU)(opcode);
+    };
+    m_opcodes[0x9000U] = [this](std::uint16_t opcode){ SKRNE(opcode); };
+    m_opcodes[0xA000U] = [this](std::uint16_t opcode){ LOADI(opcode); };
+    m_opcodes[0xB000U] = [this](std::uint16_t opcode){ JUMPI(opcode); };
+    m_opcodes[0xC000U] = [this](std::uint16_t opcode){ RAND(opcode); };
+    m_opcodes[0xD000U] = [this](std::uint16_t opcode){ DRAW(opcode); };
+    m_opcodes[0xE000U] = [this](std::uint16_t opcode)
+    {
+        m_opcodes_E.at(opcode & 0xF0FFU)(opcode);
+    };
+    m_opcodes[0xF000U] = [this](std::uint16_t opcode)
+    {
+        m_opcodes_F.at(opcode & 0xF0FFU)(opcode);
+    };
+
+    // 0 opcodes
+    m_opcodes_0[0x00E0U] = [this](){ CLS(); };
+    m_opcodes_0[0x00EEU] = [this](){ RET(); };
+
+    // 8 opcodes
+    m_opcodes_8[0x8000U] = [this](std::uint16_t opcode){ MOVE(opcode); };
+    m_opcodes_8[0x8001U] = [this](std::uint16_t opcode){ OR(opcode); };
+    m_opcodes_8[0x8002U] = [this](std::uint16_t opcode){ AND(opcode); };
+    m_opcodes_8[0x8003U] = [this](std::uint16_t opcode){ XOR(opcode); };
+    m_opcodes_8[0x8004U] = [this](std::uint16_t opcode){ ADDR(opcode); };
+    m_opcodes_8[0x8005U] = [this](std::uint16_t opcode){ SUB(opcode); };
+    m_opcodes_8[0x8006U] = [this](std::uint16_t opcode){ SHR(opcode); };
+    m_opcodes_8[0x8007U] = [this](std::uint16_t opcode){ SUBN(opcode); };
+    m_opcodes_8[0x800EU] = [this](std::uint16_t opcode){ SHL(opcode); };
+
+    // E opcodes
+    m_opcodes_E[0xE09EU] = [this](std::uint16_t opcode){ SKPR(opcode); };
+    m_opcodes_E[0xE0A1U] = [this](std::uint16_t opcode){ SKUP(opcode); };
+
+    // F opcodes
+    m_opcodes_F[0xF007U] = [this](std::uint16_t opcode){ MOVED(opcode); };
+    m_opcodes_F[0xF00AU] = [this](std::uint16_t opcode){ KEYD(opcode); };
+    m_opcodes_F[0xF015U] = [this](std::uint16_t opcode){ LOADD(opcode); };
+    m_opcodes_F[0xF018U] = [this](std::uint16_t opcode){ LOADS(opcode); };
+    m_opcodes_F[0xF01EU] = [this](std::uint16_t opcode){ ADDI(opcode); };
+    m_opcodes_F[0xF029U] = [this](std::uint16_t opcode){ LDSPR(opcode); };
+    m_opcodes_F[0xF033U] = [this](std::uint16_t opcode){ BCD(opcode); };
+    m_opcodes_F[0xF055U] = [this](std::uint16_t opcode){ STOR(opcode); };
+    m_opcodes_F[0xF065U] = [this](std::uint16_t opcode){ READ(opcode); };
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-void CHIP8::draw(sf::RenderTarget& target, sf::RenderStates states) const
+void CHIP8::run()
 {
-    target.draw(m_sprite, states);
+    sf::Clock emulate_clock;                // 500 Hz (default) emulation clock
+
+    while(m_window.isOpen())
+    {
+        for(sf::Event event; m_window.pollEvent(event);)
+        {
+            switch(event.type)
+            {
+                case sf::Event::Closed:
+                    m_window.close();
+                    break;
+
+                case sf::Event::KeyPressed:
+                    update_key(event.key.code, KeyState::Pressed);
+                    break;
+
+                case sf::Event::KeyReleased:
+                    update_key(event.key.code, KeyState::Released);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        constexpr sf::Int64 T_500Hz{2000};  // 2000 us
+
+        // 500 Hz emulation clock
+        if(emulate_clock.getElapsedTime().asMicroseconds() >= T_500Hz)
+        {
+            emulate_clock.restart();
+            emulate();
+        }
+
+        m_window.clear();
+        m_window.draw(m_sprite);
+        m_window.display();
+    }
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+// Private Member Functions
+////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
 void CHIP8::emulate()
 {
-    constexpr int T_60Hz = 16;      // 60 Hz ~= 16 ms
+    constexpr sf::Int32 T_60Hz{16};      // 60 Hz ~= 16 ms
 
     // Update 60 Hz delay and sound timers
-    if(timer_clock.getElapsedTime().asMilliseconds() > T_60Hz)
+    if(m_timer_clock.getElapsedTime().asMilliseconds() > T_60Hz)
     {
-        if(DT > 0)
-            --DT;
-        if(ST > 0)
-            --ST;
-        
-        if(!ST)
+        if(m_DT > 0U)
+            --m_DT;
+
+        if(m_ST > 0U)
+            --m_ST;
+        else
             m_sound.stop();
 
-        timer_clock.restart();
+        m_timer_clock.restart();
     }
-    
+
     // extract two bytes from memory and increment program counter
-    uint16_t opcode = (memory.at(PC) << 8) | memory.at(PC + 1);
-    PC += 2;
+    std::uint16_t opcode = (static_cast<std::uint16_t>(m_memory.at(m_PC) << 8U)
+        | static_cast<std::uint16_t>(m_memory.at(m_PC + 1)));
+    m_PC += 2;
 
-    // opcode decoder
-    switch(type(opcode))
+    // decode opcode
+    try
     {
-        case 0x0:
-            switch(NNN(opcode))
-            {
-                case 0x0E0:
-                    // CLR
-                    // clear screen
-                    std::fill(m_pixels.begin(), m_pixels.end(), 0);
-                    break;
-                
-                case 0x0EE:
-                    // RET
-                    // return from subroutine
-                    --SP;
-                    PC = stack.at(SP);
-                    break;
-                
-                default:
-                    // call RCA 1802 program ... treat as NOP
-                    break;
-            }
-            break;
-        
-        case 0x1:
-            // JP addr
-            // jump to address NNN
-            PC = NNN(opcode);
-            break;
-        
-        case 0x2:
-            // CALL addr
-            // call subroutine at NNN
-            stack.at(SP) = PC;
-            ++SP;
-            PC = NNN(opcode);
-            break;
-        
-        case 0x3:
-            // SE Vx, byte
-            // skip next instruction if VX == NN
-            if(V[VX(opcode)] == NN(opcode))
-                PC += 2;
-            break;
-        
-        case 0x4:
-            // SNE Vx, byte
-            // skip next instruction if VX != NN
-            if(V[VX(opcode)] != NN(opcode))
-                PC += 2;
-            break;
-        
-        case 0x5:
-            // SE Vx, Vy
-            // skip next instruction if VX == VY
-            if(V[VX(opcode)] == V[VY(opcode)])
-                PC += 2;
-            break;
-        
-        case 0x6:
-            // LD Vx, byte
-            // VX = NN
-            V[VX(opcode)] = NN(opcode);
-            break;
-        
-        case 0x7:
-            // ADD Vx, byte
-            // VX = VX + NN (VF carry not set)
-            V[VX(opcode)] += NN(opcode);
-            break;
-        
-        case 0x8:
-            switch(N(opcode))
-            {
-                case 0x0:
-                    // LD Vx, Vy
-                    // VX = VY
-                    V[VX(opcode)] = V[VY(opcode)];
-                    break;
-                
-                case 0x1:
-                    // OR Vx, Vy
-                    // VX = VX | VY
-                    V[VX(opcode)] |= V[VY(opcode)];
-                    break;
-                
-                case 0x2:
-                    // AND Vx, Vy
-                    // VX = VX & VY
-                    V[VX(opcode)] &= V[VY(opcode)];
-                    break;
-                
-                case 0x3:
-                    // XOR Vx, Vy
-                    // VX = VX ^ VY
-                    V[VX(opcode)] ^= V[VY(opcode)];
-                    break;
-                
-                case 0x4:
-                {
-                    // ADD Vx, Vy
-                    // VX = VX + VY (VF set to 1 if carry)
-                    uint16_t temp = V[VX(opcode)] + V[VY(opcode)];
-                    V[15] = (temp > 255) ? 1 : 0;
-                    V[VX(opcode)] = temp & 0xFF;
-                    break;
-                }
-                
-                case 0x5:
-                    // SUB Vx, Vy
-                    // VX = VX - VY (VF set to 0 if borrow)
-                    V[15] = (V[VY(opcode)] > V[VX(opcode)]) ? 0 : 1;
-                    V[VX(opcode)] -= V[VY(opcode)];
-                    break;
-                
-                case 0x6:
-                    // SHR Vx
-                    // VX = VX >> 1 (VF set to LSb)
-                    V[15] = (V[VX(opcode)] & 0x01) ? 1 : 0;
-                    V[VX(opcode)] >>= 1;
-                    break;
-                
-                case 0x7:
-                    // SUBN Vx, Vy
-                    // VX = VY - VX (VF set to 0 if borrow)
-                    V[15] = (V[VX(opcode)] > V[VY(opcode)]) ? 0 : 1;
-                    V[VX(opcode)] = V[VY(opcode)] - V[VX(opcode)];
-                    break;
-                
-                case 0xE:
-                    // SHL Vx
-                    // VX = VX << 1 (VF set to MSb)
-                    V[15] = (V[VX(opcode)] & 0x80) ? 1 : 0;
-                    V[VX(opcode)] <<= 1;
-                    break;
-                
-                default:
-                    // illegal opcode
-                    std::cerr << "Illegal opcode 0x"
-                              << std::hex
-                              << opcode
-                              << " at address 0x"
-                              << PC - 2
-                              << std::dec
-                              << '\n';
-                    break;
-            }
-            break;
-        
-        case 0x9:
-            // SNE Vx, Vy
-            // skip next instruction if VX != VY
-            if(V[VX(opcode)] != V[VY(opcode)])
-                PC += 2;
-            break;
-        
-        case 0xA:
-            // LD I, addr
-            // I = NNN
-            I = NNN(opcode);
-            break;
-        
-        case 0xB:
-            // JP V0
-            // PC = V0 + NNN
-            PC = V[0] + NNN(opcode);
-            break;
-        
-        case 0xC:
-            // RND Vx, byte
-            // VX = random & NN
-            V[VX(opcode)] = (std::rand() % 256) & NN(opcode);
-            break;
-        
-        case 0xD:
-            // DRW Vx, Vy, nibble
-            // draw sprite pointed to by I of height N at (VX,VY)
-            // VF set to 1 if pixels flipped from set/unset (I unchanged)
-            V[15] = 0;
-
-            for(uint8_t y_sprite = 0; y_sprite < N(opcode); ++y_sprite)
-            {
-                for(uint8_t x_sprite = 0; x_sprite < 8; ++x_sprite)
-                {
-                    if(memory.at(I + y_sprite) & (0x80 >> x_sprite))
-                    {
-                        // compute offset into pixel data, wrapping x and y
-                        // values if they're out of bounds.
-                        uint8_t x = (V[VX(opcode)] + x_sprite) & (width - 1);
-                        uint8_t y = (V[VY(opcode)] + y_sprite) & (height - 1);
-                        uint16_t offset = x + (width * y);
-                        
-                        if(m_pixels[offset])
-                            V[15] = 1;
-                        
-                        m_pixels[offset] ^= 0xFFFF'FFFF;
-                    }
-                }
-            }
-
-            m_texture.update(reinterpret_cast<const sf::Uint8*>(m_pixels.data()));
-            break;
-
-        case 0xE:
-            switch(NN(opcode))
-            {
-                case 0x9E:
-                    // SKP Vx
-                    // skip next instruction if VX == key pressed
-                    if(m_keymap.at(V[VX(opcode)]).second == KeyState::Pressed)
-                        PC += 2;
-                    break;
-                
-                case 0xA1:
-                    // SKNP Vx
-                    // skip next instruction if VX != key pressed
-                    if(m_keymap.at(V[VX(opcode)]).second != KeyState::Pressed)
-                        PC += 2;
-                    break;
-                
-                default:
-                    // illegal opcode
-                    std::cerr << "Illegal opcode 0x"
-                              << std::hex
-                              << opcode
-                              << " at address 0x"
-                              << PC - 2
-                              << std::dec
-                              << '\n';
-                    break;
-            }
-            break;
-        
-        case 0xF:
-            switch(NN(opcode))
-            {
-                case 0x07:
-                    // LD Vx, DT
-                    // VX = DT
-                    V[VX(opcode)] = DT;
-                    break;
-                
-                case 0x0A:
-                    // LD Vx, K
-                    // VX = keypress (blocking)
-                    if(!m_key_captured)
-                    {
-                        auto key_it = std::find_if(m_keymap.begin(),
-                                                   m_keymap.end(),
-                                                   [](const auto& k){return k.second == KeyState::Pressed;});
-                        
-                        if(key_it != m_keymap.end())
-                        {
-                            V[VX(opcode)] = std::distance(m_keymap.begin(), key_it);
-                            m_key_captured = true;
-                        }
-
-                        PC -= 2;
-                    }
-                    else
-                    {
-                        if(m_keymap.at(V[VX(opcode)]).second == KeyState::Released)
-                            m_key_captured = false;
-                        else
-                            PC -= 2;
-                    }
-                    break;
-                
-                case 0x15:
-                    // LD DT, Vx
-                    // DT = VX
-                    DT = V[VX(opcode)];
-                    break;
-                
-                case 0x18:
-                    // LD ST, Vx
-                    // ST = VX
-                    ST = V[VX(opcode)];
-
-                    if(ST)
-                        m_sound.play();
-                    
-                    break;
-                
-                case 0x1E:
-                    // ADD I, Vx
-                    // I = I + VX (VF set to 1 if overflow)
-                    I += V[VX(opcode)];
-                    V[15] = (I > 0x0FFF) ? 1 : 0;
-                    break;
-                
-                case 0x29:
-                    // LD F, Vx
-                    // set I to sprite address for character in VX
-                    I = V[VX(opcode)] * 5;
-                    break;
-                
-                case 0x33:
-                    // LD B, Vx
-                    // set I to BCD representation of VX, MSd at I, LSd at I+2
-                    memory.at(I) = V[VX(opcode)] / 100;
-                    memory.at(I + 1) = (V[VX(opcode)] / 10) % 10;
-                    memory.at(I + 2) = V[VX(opcode)] % 10;
-                    break;
-                
-                case 0x55:
-                    // LD [I], Vx
-                    // store V0-VX at address I (I auto incremented)
-                    for(std::size_t i = 0; i <= VX(opcode); ++i)
-                    {
-                        memory.at(I) = V[i];
-                        ++I;
-                    }
-                    break;
-                
-                case 0x65:
-                    // LD Vx, [I]
-                    // fill V0-VX with values at address I (I auto incremented)
-                    for(std::size_t i = 0; i <= VX(opcode); ++i)
-                    {
-                        V[i] = memory.at(I);
-                        ++I;
-                    }
-                    break;
-                
-                default:
-                    // illegal opcode
-                    std::cerr << "Illegal opcode 0x"
-                              << std::hex
-                              << opcode
-                              << " at address 0x"
-                              << PC - 2
-                              << std::dec
-                              << '\n';
-                    break;
-            }
-            break;
-
-        default:
-            // illegal opcode
-            std::cerr << "Illegal opcode 0x"
-                      << std::hex
-                      << opcode
-                      << " at address 0x"
-                      << PC - 2
-                      << std::dec
-                      << '\n';
-            break;
+        m_opcodes.at(opcode & 0xF000U)(opcode);
+    }
+    catch(const std::out_of_range& e)
+    {
+        fmt::print(stderr, "Illegal opcode {:#04x} at {:#05x}\n", opcode,
+            m_PC - 2);
     }
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-void CHIP8::key_press(sf::Keyboard::Key key)
+void CHIP8::update_key(sf::Keyboard::Key key, KeyState state)
 {
-    // Find the key in the keymap
-    auto key_iter = std::find_if(m_keymap.begin(), m_keymap.end(),
-                                 [key](const auto& k){return k.first == key;});
-    
-    if(key_iter != m_keymap.end())
+    auto it = std::find_if(m_keymap.begin(), m_keymap.end(),
+        [key](const auto &k)
+        {
+            return (k.first == key);
+        });
+
+    if(it != m_keymap.end())
     {
         // Compute the index into the keymap and update its state
-        auto index = std::distance(m_keymap.begin(), key_iter);
-        m_keymap[index].second = KeyState::Pressed;
+        auto i = static_cast<gsl::index>(std::distance(m_keymap.begin(), it));
+        m_keymap[i].second = state;
     }
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-void CHIP8::key_release(sf::Keyboard::Key key)
+// Private Member Functions - OPCODES
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::CLS()
 {
-    // Find the key in the keymap
-    auto key_iter = std::find_if(m_keymap.begin(), m_keymap.end(),
-                                 [key](const auto& k){return k.first == key;});
-    
-    if(key_iter != m_keymap.end())
+    // 00E0 - clear the display
+    for(int y{0}; y != height; ++y)
     {
-        // Compute the indeo into the keymap and update its state
-        auto index = std::distance(m_keymap.begin(), key_iter);
-        m_keymap[index].second = KeyState::Released;
+        for(int x{0}; x != width; ++x)
+        {
+            m_pixels.setPixel(x, y, sf::Color::Black);
+        }
     }
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static std::vector<sf::Int16> square_wave(unsigned int frequency,
-                                          unsigned int sample_rate)
+void CHIP8::RET()
 {
-    unsigned int num_samples = sample_rate / frequency;
-    std::vector<sf::Int16> samples(num_samples);
-    
-    for(unsigned int n = 0; n != num_samples / 2; ++n)
-        samples[n] = 0;
-    
-    for(unsigned int n = num_samples / 2; n != num_samples; ++n)
-        samples[n] = 24500;
-
-    return samples;
+    // 00EE - return from a subroutine
+    --m_SP;
+    m_PC = m_stack.at(m_SP);
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static inline uint8_t type(uint16_t opcode)
+void CHIP8::JUMP(std::uint16_t opcode)
 {
-    return (opcode & 0xF000) >> 12;
+    // 1nnn - jump to location nnn
+    m_PC = NNN(opcode);
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static inline uint16_t NNN(uint16_t opcode)
+void CHIP8::CALL(std::uint16_t opcode)
 {
-    return opcode & 0x0FFF;
+    // 2nnn - call subroutine at nnn
+    m_stack.at(m_SP) = m_PC;
+    ++m_SP;
+    m_PC = NNN(opcode);
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static inline uint8_t NN(uint16_t opcode)
+void CHIP8::SKE(std::uint16_t opcode)
 {
-    return opcode & 0x00FF;
+    // 3xnn - skip next instruction if Vx == nn
+    if(m_V[X(opcode)] == NN(opcode))
+        m_PC += 2;
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static inline uint8_t N(uint16_t opcode)
+void CHIP8::SKNE(std::uint16_t opcode)
 {
-    return opcode & 0x000F;
+    // 4xnn - skip next instruction if Vx != nn
+    if(m_V[X(opcode)] != NN(opcode))
+        m_PC += 2;
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static inline uint8_t VX(uint16_t opcode)
+void CHIP8::SKRE(std::uint16_t opcode)
 {
-    return (opcode & 0x0F00) >> 8;
+    // 5xy0 - skip next instruction if Vx == Vy
+    if(m_V[X(opcode)] == m_V[Y(opcode)])
+        m_PC += 2;
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-static inline uint8_t VY(uint16_t opcode)
+void CHIP8::LOAD(std::uint16_t opcode)
 {
-    return (opcode & 0x00F0) >> 4;
+    // 6xnn - set Vx = nn
+    m_V[X(opcode)] = NN(opcode);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::ADD(std::uint16_t opcode)
+{
+    // 7xnn - set Vx = Vx + nn (carry flag not set)
+    m_V[X(opcode)] += NN(opcode);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::MOVE(std::uint16_t opcode)
+{
+    // 8xy0 - set Vx = Vy
+    m_V[X(opcode)] = m_V[Y(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::OR(std::uint16_t opcode)
+{
+    // 8xy1 - Set Vx = Vx OR Vy
+    m_V[X(opcode)] |= m_V[Y(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::AND(std::uint16_t opcode)
+{
+    // 8xy2 - set Vx = Vx AND Vy
+    m_V[X(opcode)] &= m_V[Y(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::XOR(std::uint16_t opcode)
+{
+    // 8xy3 - set Vx = Vx XOR Vy
+    m_V[X(opcode)] ^= m_V[Y(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::ADDR(std::uint16_t opcode)
+{
+    // 8xy4 - set Vx = Vx + Vy, set VF = carry
+    std::uint16_t temp = static_cast<std::uint16_t>(m_V[X(opcode)])
+        + static_cast<std::uint16_t>(m_V[Y(opcode)]);
+    m_V[15] = (temp > 255U) ? 1U : 0U;
+    m_V[X(opcode)] = static_cast<std::uint8_t>(temp & 0x00FFU);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SUB(std::uint16_t opcode)
+{
+    // 8xy5 - set Vx = Vx - Vy, set VF = NOT borrow
+    m_V[15] = (m_V[Y(opcode)] > m_V[X(opcode)]) ? 0U : 1U;
+    m_V[X(opcode)] -= m_V[Y(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SHR(std::uint16_t opcode)
+{
+    // 8xy6 - set Vx = Vx >> 1, set VF = LSb
+    m_V[15] = (m_V[X(opcode)] & 0x01U) ? 1U : 0U;
+    m_V[X(opcode)] >>= 1;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SUBN(std::uint16_t opcode)
+{
+    // 8xy7 - set Vx = Vy - Vx, set VF = NOT borrow
+    m_V[15] = (m_V[X(opcode)] > m_V[Y(opcode)]) ? 0U : 1U;
+    m_V[X(opcode)] = m_V[Y(opcode)] - m_V[X(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SHL(std::uint16_t opcode)
+{
+    // 8xyE - set Vx = Vx << 1, set VF = MSb
+    m_V[15] = (m_V[X(opcode)] & 0x80U) ? 1U : 0U;
+    m_V[X(opcode)] <<= 1;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SKRNE(std::uint16_t opcode)
+{
+    // 9xy0 - skip next instruction if Vx != Vy
+    if(m_V[X(opcode)] != m_V[Y(opcode)])
+        m_PC += 2;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::LOADI(std::uint16_t opcode)
+{
+    // Annn - set I = nnn
+    m_I = NNN(opcode);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::JUMPI(std::uint16_t opcode)
+{
+    // Bnnn - jump to location nnn + V0
+    m_PC = static_cast<std::size_t>(m_V[0]) + NNN(opcode);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::RAND(std::uint16_t opcode)
+{
+    // Cxnn - set Vx = random byte and nn
+    m_V[X(opcode)] = m_dist(m_engine) & NN(opcode);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::DRAW(std::uint16_t opcode)
+{
+    // Dxyn - display n-byte sprite starting at memory location I at (Vx, Vy),
+    //        set VF = collision
+    m_V[15] = 0U;
+
+    for(std::uint8_t y_sprite{0}; y_sprite != N(opcode); ++y_sprite)
+    {
+        for(std::uint8_t x_sprite{0}; x_sprite != 8U; ++x_sprite)
+        {
+            std::size_t addr = m_I + static_cast<std::size_t>(y_sprite);
+
+            if(m_memory.at(addr) & (0x80U >> x_sprite))
+            {
+                // compute offset into pixel data, wrapping x and y
+                // values if they're out of bounds.
+                int x = static_cast<int>(m_V[X(opcode)] + x_sprite);
+                int y = static_cast<int>(m_V[Y(opcode)] + y_sprite);
+
+                if(m_pixels.getPixel(x, y) == sf::Color::White)
+                {
+                    m_V[15] = 1U;
+                    m_pixels.setPixel(x, y, sf::Color::Black);
+                }
+                else
+                {
+                    m_pixels.setPixel(x, y, sf::Color::White);
+                }
+            }
+        }
+    }
+
+    m_texture.update(m_pixels);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SKPR(std::uint16_t opcode)
+{
+    // Ex9E - skip next instruction if key with the value of Vx is pressed
+    if(m_keymap.at(m_V[X(opcode)]).second == KeyState::Pressed)
+        m_PC += 2;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::SKUP(std::uint16_t opcode)
+{
+    // ExA1 - skip next instruction if key with the value of Vx is not pressed
+    if(m_keymap.at(m_V[X(opcode)]).second != KeyState::Pressed)
+        m_PC += 2;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::MOVED(std::uint16_t opcode)
+{
+    // Fx07 - set Vx = delay time value
+    m_V[X(opcode)] = m_DT;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::KEYD(std::uint16_t opcode)
+{
+    // Fx0A - wait for key press, store the value of the key in Vx
+    if(!m_key_captured)
+    {
+        auto it = std::find_if(m_keymap.begin(), m_keymap.end(),
+            [](const auto& k)
+            {
+                return (k.second == KeyState::Pressed);
+            });
+
+        if(it != m_keymap.end())
+        {
+            m_V[X(opcode)] = static_cast<std::uint8_t>(
+                std::distance(m_keymap.begin(), it));
+            m_key_captured = true;
+        }
+
+        m_PC -= 2;
+    }
+    else
+    {
+        if(m_keymap.at(m_V[X(opcode)]).second == KeyState::Released)
+            m_key_captured = false;
+        else
+            m_PC -= 2;
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::LOADD(std::uint16_t opcode)
+{
+    // Fx15 - set delay time = Vx
+    m_DT = m_V[X(opcode)];
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::LOADS(std::uint16_t opcode)
+{
+    // Fx18 - set sound time = Vx
+    m_ST = m_V[X(opcode)];
+
+    if(m_ST > 0)
+        m_sound.play();
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::ADDI(std::uint16_t opcode)
+{
+    // Fx1E - set I = I + Vx (carry flag not set)
+    m_I += static_cast<std::size_t>(m_V[X(opcode)]);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::LDSPR(std::uint16_t opcode)
+{
+    // Fx29 - set I = location of sprite for digit Vx
+    m_I = static_cast<std::size_t>(m_V[X(opcode)] * 5U);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::BCD(std::uint16_t opcode)
+{
+    // Fx33 - store BCD representation of Vx in memory locations I, I+1, and I+2
+    m_memory.at(m_I)     = m_V[X(opcode)] / 100U;
+    m_memory.at(m_I + 1) = (m_V[X(opcode)] / 10U) % 10U;
+    m_memory.at(m_I + 2) = m_V[X(opcode)] % 10U;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::STOR(std::uint16_t opcode)
+{
+    // Fx55 - store registers V0 through Vx in memory starting at location I
+    for(gsl::index i{0}; i <= X(opcode); ++i)
+    {
+        m_memory.at(m_I) = m_V[i];
+        ++m_I;
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+void CHIP8::READ(std::uint16_t opcode)
+{
+    // Fx65 - read registers V0 through Vx from memory starting at location I
+    for(gsl::index i{0}; i <= X(opcode); ++i)
+    {
+        m_V[i] = m_memory.at(m_I);
+        ++m_I;
+    }
 }
